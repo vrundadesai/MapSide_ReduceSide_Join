@@ -1,0 +1,223 @@
+package BigDataHW2_2;
+
+import java.io.IOException;
+import java.util.*;
+
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.*;
+import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.mapreduce.*;
+import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
+
+public class BigDataHW2_2 {
+
+    //UserID and record(only male) 
+    public static class UsersMap extends Mapper<LongWritable, Text, IntWritable, Text> {
+
+        private IntWritable userKey = new IntWritable();
+        private Text userValue = new Text();
+
+        public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
+            String line = value.toString().trim();
+            try {
+                String[] tokens = line.split("\\::"); 
+                if (tokens[1].equals("M")) {
+                    userKey.set(Integer.parseInt(tokens[0]));
+                    userValue.set("U" + tokens[1]);
+
+                    context.write(userKey, userValue); 
+                }
+            } catch (ArrayIndexOutOfBoundsException e) {
+                // DO NOTHING 
+            }
+        }
+    }
+
+    public static class RatingsMap extends Mapper<LongWritable, Text, IntWritable, Text> {
+    	//UserID and ratings
+
+        private IntWritable ratingKey = new IntWritable();
+        private Text ratingValue = new Text();
+
+        public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
+            String line = value.toString().trim();
+            String[] tokens = line.split("\\::"); 
+            try {
+
+                ratingKey.set(Integer.parseInt(tokens[0]));
+                ratingValue.set("R" + tokens[1] + "," + tokens[2]);
+                context.write(ratingKey, ratingValue); 
+
+            } catch (ArrayIndexOutOfBoundsException e) {
+                // DO NOTHING 
+            }
+        }
+    }
+
+    public static class UserRatingsReduceJoin extends Reducer<IntWritable, Text, IntWritable, Text> {
+//users and ratings join..movieID rating
+        private Text tmp, joinValue = new Text();
+        private IntWritable joinKey = new IntWritable();
+        private ArrayList<Text> listUser = new ArrayList<Text>();
+        private ArrayList<Text> listRating = new ArrayList<Text>();
+
+        @Override
+        public void reduce(IntWritable key, Iterable<Text> values, Context context)
+                throws IOException, InterruptedException {
+            listUser.clear();
+            listRating.clear();
+            String[] rating = null;
+            Iterator<Text> valueIterator = values.iterator();
+            while (valueIterator.hasNext()) {
+                tmp = valueIterator.next();
+                if (tmp.charAt(0) == 'U') {
+                    listUser.add(new Text(tmp.toString().substring(1)));
+                } else if (tmp.charAt(0) == 'R') {
+                    listRating.add(new Text(tmp.toString().substring(1)));
+                }
+            }
+            if (!listUser.isEmpty() && !listRating.isEmpty()) {
+                for (Text userRecords : listUser) {
+                    for (Text ratingRecords : listRating) {
+                        try {
+                            rating = ratingRecords.toString().split(",");
+                            joinValue.set(rating[1]);
+                            joinKey.set(Integer.parseInt(rating[0]));
+                            context.write(joinKey, joinValue);
+                        } catch (Exception e) {
+                            //do nothing
+                        }
+
+                    }
+                }
+            }
+        }
+    }
+
+    public static class UsersRatingsJoinMap extends Mapper<LongWritable, Text, IntWritable, Text>
+    {
+
+        private IntWritable usersRatingsKey = new IntWritable();
+        private Text usersRatingsValue = new Text();
+
+        public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
+            String line = value.toString().trim();
+            String[] tokens = line.split("[\\s]+");
+            try {
+                usersRatingsKey.set(Integer.parseInt(tokens[0]));
+                usersRatingsValue.set("J"+tokens[1]);
+                context.write(usersRatingsKey, usersRatingsValue);
+            } catch (Exception e) {
+                // DO NOTHING 
+            }
+       }
+    }
+
+    public static class MoviesMap extends Mapper<LongWritable, Text, IntWritable, Text> {
+    	//movieID and genre
+
+        private final static IntWritable movieId = new IntWritable(1);
+        private static Text titleGenre = new Text();
+
+
+        //
+        @Override
+        public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
+            String line = value.toString().trim();
+            String[] tokens = line.split("::");
+            String[] genres = tokens[2].trim().split("\\|");
+            String choice = "Action OR Drama";
+            for (String genre : genres) {
+                if(choice.contains(genre)){
+                    movieId.set(Integer.parseInt(tokens[0]));
+                    titleGenre.set("M"+tokens[1]+"\t"+tokens[2]);
+                    context.write(movieId, titleGenre);
+                    break;
+                }
+
+            }
+        }
+    }
+
+    //Change this logic
+    public static class UserRatingsMoviesReduceJoin extends Reducer<IntWritable, Text, IntWritable, Text> {
+
+        private Text tmp, joinValue = new Text();
+        private ArrayList<Text> listMovie = new ArrayList<Text>();
+        private ArrayList<Text> listRating = new ArrayList<Text>();
+        @Override
+        public void reduce(IntWritable key, Iterable<Text> values, Context context)
+                throws IOException, InterruptedException {
+            listMovie.clear();
+            listRating.clear();
+            double sum = 0;
+            double count = 0,avg = 0;
+            Iterator<Text> valueIterator = values.iterator();
+            while (valueIterator.hasNext()) {
+                tmp = valueIterator.next();
+                if (tmp.charAt(0) == 'M') {
+                    listMovie.add(new Text(tmp.toString().substring(1)));
+                } else if (tmp.charAt(0) == 'J') {
+                int rating = Integer.parseInt(tmp.toString().substring(1));
+                sum += rating;
+                count++;
+                }
+            }
+            avg = sum / count;
+                                    
+            if (!listMovie.isEmpty() && avg >= 4.4 && avg<= 4.7) {
+                joinValue.set(listMovie.get(0)+"\t"+avg);
+                 context.write(key, joinValue);
+            }
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+
+
+        
+
+        JobConf conf1 = new JobConf();
+        Job job1 = new Job(conf1, "BigDataHW2_2_1");
+
+        org.apache.hadoop.mapreduce.lib.input.MultipleInputs.addInputPath(job1, new Path(args[0]), TextInputFormat.class, UsersMap.class);
+        org.apache.hadoop.mapreduce.lib.input.MultipleInputs.addInputPath(job1, new Path(args[1]), TextInputFormat.class, RatingsMap.class);
+       
+
+
+        job1.setReducerClass(UserRatingsReduceJoin.class);
+        job1.setMapOutputKeyClass(IntWritable.class);
+        job1.setMapOutputValueClass(Text.class);
+        job1.setOutputKeyClass(IntWritable.class);
+        job1.setOutputValueClass(Text.class);
+        job1.setJarByClass(BigDataHW2_2.class);
+
+        job1.setOutputFormatClass(TextOutputFormat.class);
+        FileOutputFormat.setOutputPath(job1, new Path(args[2]));
+
+        if (job1.waitForCompletion(true)) {
+
+            JobConf conf2 = new JobConf();
+            Job job2 = new Job(conf2, "BigDataHW2_2_2");
+
+            org.apache.hadoop.mapreduce.lib.input.MultipleInputs.addInputPath(job2, new Path(args[2]), TextInputFormat.class, UsersRatingsJoinMap.class);
+            org.apache.hadoop.mapreduce.lib.input.MultipleInputs.addInputPath(job2, new Path(args[3]), TextInputFormat.class, MoviesMap.class);
+            
+
+            job2.setReducerClass(UserRatingsMoviesReduceJoin.class);
+            job2.setMapOutputKeyClass(IntWritable.class);
+            job2.setMapOutputValueClass(Text.class);
+            job2.setOutputKeyClass(IntWritable.class);
+            job2.setOutputValueClass(Text.class);
+            job2.setJarByClass(BigDataHW2_2.class);
+
+            job2.setOutputFormatClass(TextOutputFormat.class);
+            FileOutputFormat.setOutputPath(job2, new Path(args[4]));
+
+            job2.waitForCompletion(true);
+
+        }
+    }
+}
